@@ -1,12 +1,22 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
 
 type Field [][]string
+
+type Response struct {
+	win bool
+	who string
+}
 
 var Zero string = "0"
 var Cross string = "X"
 var Space string = "-"
+
+var wg sync.WaitGroup
 
 func CreateField() Field {
 	f := make(Field, 3)
@@ -21,36 +31,40 @@ func Move(field *Field, x, y int, val string) {
 	// checks
 }
 
-func checkRow(field *Field, row int) (bool, string) {
+func checkRow(out chan <- Response, field *Field, row int) {
+	defer wg.Done()
 	who := (*field)[row][0]
 	if who != Space && (*field)[row][1] == (*field)[row][2] && (*field)[row][1] == who {
-		return true, who
+		out <- Response{win: true, who: who}
+		close(out)
 	}
-	return false, ""
 }
 
-func checkCol(field *Field, col int) (bool, string) {
+func checkCol(out chan <- Response, field *Field, col int) {
+	defer wg.Done()
 	who := (*field)[0][col]
 	if who != Space && (*field)[1][col] == (*field)[2][col] && (*field)[1][col] == who {
-		return true, who
+		out <- Response{win: true, who: who}
+		close(out)
 	}
-	return false, ""
 }
 
 // return is anyone win and who win
-func Check(field *Field) (bool, string) {
+func Check(field *Field) Response {
+	wg.Add(6)
+	responses := make(chan Response, 9)
 	for i := 0; i < 3; i++ {
-		win, who := checkCol(field, i)
-		if win {
-			return win, who
-		}
-
-		win, who = checkRow(field, i)
-		if win {
-			return win, who
-		}
+		go checkCol(responses, field, i)
+		go checkRow(responses, field, i)
 	}
-	return false, ""
+	wg.Wait()
+
+	res := Response{win: false, who: ""}
+	select {
+		case res = <- responses:
+		default:
+	}
+	return res
 }
 
 func (field *Field) Print() {
