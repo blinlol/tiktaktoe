@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+option go_package = "tiktaktoe/game_proto/game_proto";
+
+enum Player {
+    NONE = 0;
+    ZERO = 1;
+    CROSS = 2;
+}
+
+message StartRequest {
+
+}
+
+message StartResponse {
+    int32 game_id = 1;
+    Player iam = 2;
+}
+
+message Move {
+    int32 row = 1;
+    int32 col = 2;
+    Player who = 3;
+    string message = 4;
+}
+
+message MessageTime {
+    string message = 1;
+    string time = 2;
+}
+
+service Game {
+    // клиенты подключаются к серверу, сервер создает игру.
+    // клиенты посылают свои желаемые ходы, а сервер подтверждает,
+    // что ход возможен (пересылает этот же ход)
+    // и затем посылает ход следующего игрока.
+    // т.е. при получении хода сервер его выполняет, и посылает обратно обоим клиентам.
+    rpc StartGame (StartRequest) returns (StartResponse) {}
+    rpc MakeMove (stream Move) returns (stream Move) {}
+    rpc Test (MessageTime) returns (MessageTime) {}
+}

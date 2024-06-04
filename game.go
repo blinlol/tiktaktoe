@@ -26,11 +26,6 @@ func CreateField() Field {
 	return f
 }
 
-func Move(field *Field, x, y int, val string) {
-	(*field)[y][x] = val
-	// checks
-}
-
 func checkRow(out chan <- Response, field *Field, row int) {
 	defer wg.Done()
 	who := (*field)[row][0]
