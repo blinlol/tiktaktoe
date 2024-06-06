@@ -85,18 +85,28 @@ func (game *Game) InitPlayers(stream pb.Game_MakeMoveServer){
 
 func (game *Game) ApplyMove(move *pb.Move) (bool, error) {
 	fmt.Println(move.Message)
-	row, col := move.Row, move.Col
 
+	row, col := move.Row, move.Col
+	win := false
 	if game.Field[row][col] != pb.Player_NONE {
-		log.Fatalln("Wrong row col")
+		// log.Fatalln("Wrong row col")
+		// нельзя поставить, значит посылаем запрос автору на переделку
+		move.Row, move.Col = -1, -1
+		move.Message = "Wrong row, col"
+		if move.Who == pb.Player_CROSS {
+			move.Who = pb.Player_ZERO
+			game.cross_stream.Send(move)
+		} else {
+			move.Who = pb.Player_CROSS
+			game.zero_stream.Send(move)
+		}
+		return false, nil
+	} else {
+		game.Field[row][col] = move.Who
+		move.Finish, move.Winner = game.Field.check()
+		win = move.Finish
 	}
-	game.Field[row][col] = move.Who
-	win, who := game.Field.check()
-	if win {
-		move.Finish = true
-		move.Winner = who
-	}
-	
+
 	wg := sync.WaitGroup{}
 	wg.Add(2)
 

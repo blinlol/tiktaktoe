@@ -74,10 +74,11 @@ func (field *FieldType) ApplyMove(move *pb.Move) {
     fmt.Println(move.Message)
 
     row, col := move.Row, move.Col
-    if field[row][col] != pb.Player_NONE {
+
+    if row < 0 || col < 0 {
         return
     }
-    if row < 0 || col < 0 {
+    if field[row][col] != pb.Player_NONE {
         return
     }
     field[row][col] = move.Who
