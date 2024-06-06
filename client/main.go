@@ -9,6 +9,8 @@ import (
 	pb "tiktaktoe/game_proto"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -37,7 +39,9 @@ func (field *FieldType) Print(){
     }
 }
 
-func GetRowCol() (row, col int32, err error) {
+func GetRowCol() (row, col int32) {
+    var err error
+
     fmt.Print("Enter row: ")
     _, err = fmt.Scanf("%d", &row)
     for ; err != nil || 0 > row || row > 2 ; {
@@ -56,12 +60,9 @@ func GetRowCol() (row, col int32, err error) {
 }
 
 func (game *Game) SendMove(stream pb.Game_MakeMoveClient) error {
-    row, col, err := GetRowCol()
-    if err != nil {
-        return err
-    }
+    row, col := GetRowCol()
     move := pb.Move{Row: row, Col: col, Who: game.Iam}
-    err = stream.Send(&move)
+    err := stream.Send(&move)
     if err != nil {
         log.Printf("Fail to send: %v\n", err)
         return err
@@ -98,22 +99,30 @@ func Play(ctx context.Context, client pb.GameClient) error {
         log.Fatalf("client.RouteChat failed: %v", err)
     }
 
-    err = stream.Send(&pb.Move{Row: -1, Col: -1, Who: game.Iam})
+    // first message only for synchronization
+    err = stream.Send(&pb.Move{Row: -1, Col: -1, Who: game.Iam, Message: "Want to play"})
     if err != nil {
-        log.Fatalf("%v\n", err)
+        log.Printf("%v\n", err)
+        return err
     }
 
     if response.Iam == pb.Player_CROSS {
-        game.SendMove(stream)
+        err = game.SendMove(stream)
+        if err != nil {
+            log.Printf("Failed to send move%v\n", err)
+            return err
+        }
     }
     for {
         move, err := stream.Recv()
+        if status.Code(err) == codes.Unavailable {
+            log.Printf("%v\n", err)
+            return err
+        }
         if err == io.EOF {
             log.Println("Game end!")
+            fmt.Println(move.Message)
             break
-        } else if err != nil {
-            log.Printf("%v\n", err)
-            continue
         }
         game.Field.ApplyMove(move)
         if move.Who != game.Iam {
@@ -135,6 +144,9 @@ func main(){
 
     err = Play(ctx, client)
     if err != nil {
-        log.Fatalf("%v\n", err)
+        log.Fatalf("main: %v\n", err)
     }
 }
+
+
+// сделать так, чтобы начинали играть и выводить поле только после того, как нашелся второй игрок
