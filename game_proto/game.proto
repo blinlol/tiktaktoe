@@ -22,6 +22,8 @@ message Move {
     int32 col = 2;
     Player who = 3;
     string message = 4;
+    bool finish = 5;
+    Player winner = 6;
 }
 
 message MessageTime {

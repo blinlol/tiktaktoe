@@ -6,12 +6,14 @@ import (
 	"io"
 	"log"
 	"net"
-	"time"
 	"sync"
+	"time"
 
 	pb "tiktaktoe/game_proto"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 
@@ -26,6 +28,25 @@ type Game struct {
 	waitCross chan int
 }
 
+func (field *FieldType) check() (bool, pb.Player) {
+	for i := 0 ; i < 3; i++ {
+		if field[i][0] != pb.Player_NONE && field[i][0] == field[i][1] && field[i][1] == field[i][2]{
+			return true, field[i][0]
+		}
+		if field[0][i] != pb.Player_NONE && field[0][i] == field[1][i] && field[1][i] == field[2][i] {
+			return true, field[0][i]
+		}
+	}
+	if field[0][0] != pb.Player_NONE && field[0][0] == field[1][1] && field[1][1] == field[2][2] {
+		return true, field[0][0]
+	}
+	if field[0][2] != pb.Player_NONE && field[0][2] == field[1][1] && field[1][1] == field[2][0] {
+		return true, field[0][2]
+	}
+	return false, pb.Player_NONE
+}
+
+
 type server struct {
 	pb.UnimplementedGameServer
 
@@ -38,15 +59,11 @@ func (game *Game) InitPlayers(stream pb.Game_MakeMoveServer){
 	wg.Add(2)
 	go func(){
 		defer wg.Done()
-		log.Println(1)
 		<-game.waitCross
-		log.Println(11)
 	}()
 	go func(){
 		defer wg.Done()
-		log.Println(2)
 		<-game.waitZero
-		log.Println(22)
 	}()
 
 	move, err := stream.Recv()
@@ -55,27 +72,30 @@ func (game *Game) InitPlayers(stream pb.Game_MakeMoveServer){
 	}
 
 	if move.Who == pb.Player_CROSS {
-		log.Println("cross stream")
+		log.Println("init cross stream")
 		game.cross_stream = stream
 		close(game.waitCross)
 	} else {
-		log.Println("zero stream")
+		log.Println("init zero stream")
 		game.zero_stream = stream
 		close(game.waitZero)
 	}
 	wg.Wait()
 }
 
-
-func (game *Game) ApplyMove(move *pb.Move) error {
+func (game *Game) ApplyMove(move *pb.Move) (bool, error) {
 	fmt.Println(move.Message)
 	row, col := move.Row, move.Col
 
 	if game.Field[row][col] != pb.Player_NONE {
 		log.Fatalln("Wrong row col")
-		return nil
 	}
 	game.Field[row][col] = move.Who
+	win, who := game.Field.check()
+	if win {
+		move.Finish = true
+		move.Winner = who
+	}
 	
 	wg := sync.WaitGroup{}
 	wg.Add(2)
@@ -91,7 +111,7 @@ func (game *Game) ApplyMove(move *pb.Move) error {
 	}()
 
 	wg.Wait()
-	return nil
+	return win, nil
 }
 
 func (*server) Test(ctx context.Context, in *pb.MessageTime) (*pb.MessageTime, error) {
@@ -128,12 +148,17 @@ func (s *server) MakeMove(stream pb.Game_MakeMoveServer) error {
 		if err == io.EOF {
 			log.Println("End Game")
 			break
+		} else if status.Code(err) == codes.Canceled {
+			break
 		} else if err != nil {
-			log.Printf("Recv error: %v\n", err)
+			log.Fatalf("Recv error: %v\n", err)
 			continue
 		}
 
-		err = s.game.ApplyMove(move)
+		finish, err := s.game.ApplyMove(move)
+		if finish {
+			break
+		}
 		if err != nil {
 			log.Printf("ApplyMove %v\n", err)
 		}

@@ -90,7 +90,6 @@ func Play(ctx context.Context, client pb.GameClient) error {
         return err
     }
     log.Printf("Play::response = %s\n", response.String())
-    game.Field.Print()
     game.Id = int(response.GetGameId())
     game.Iam = response.GetIam()
 
@@ -106,6 +105,7 @@ func Play(ctx context.Context, client pb.GameClient) error {
         return err
     }
 
+    game.Field.Print()
     if response.Iam == pb.Player_CROSS {
         err = game.SendMove(stream)
         if err != nil {
@@ -125,6 +125,10 @@ func Play(ctx context.Context, client pb.GameClient) error {
             break
         }
         game.Field.ApplyMove(move)
+        if move.Finish {
+            fmt.Printf("Winner: %s\n", move.Winner)
+            break
+        }
         if move.Who != game.Iam {
             game.SendMove(stream)
         }
