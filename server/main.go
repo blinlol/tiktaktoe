@@ -43,7 +43,15 @@ func (field *FieldType) check() (bool, pb.Player) {
 	if field[0][2] != pb.Player_NONE && field[0][2] == field[1][1] && field[1][1] == field[2][0] {
 		return true, field[0][2]
 	}
-	return false, pb.Player_NONE
+
+	for _, row := range field {
+		for _, el := range row {
+			if el == pb.Player_NONE {
+				return false, pb.Player_NONE
+			}
+		}
+	}
+	return true, pb.Player_NONE
 }
 
 
@@ -89,7 +97,6 @@ func (game *Game) ApplyMove(move *pb.Move) (bool, error) {
 	row, col := move.Row, move.Col
 	win := false
 	if game.Field[row][col] != pb.Player_NONE {
-		// log.Fatalln("Wrong row col")
 		// нельзя поставить, значит посылаем запрос автору на переделку
 		move.Row, move.Col = -1, -1
 		move.Message = "Wrong row, col"
