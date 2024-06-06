@@ -22,26 +22,34 @@ type Game struct {
 
 var game Game
 
+var playerToString map[pb.Player]string = map[pb.Player]string{
+    pb.Player_ZERO: "0",
+    pb.Player_CROSS: "X",
+    pb.Player_NONE: "-",
+}
 
 func (field *FieldType) Print(){
     for _, row := range field {
-        fmt.Println(row)
+        for _, symb := range row {
+            fmt.Print(playerToString[symb])
+        }
+        fmt.Println()
     }
 }
 
 func GetRowCol() (row, col int32, err error) {
     fmt.Print("Enter row: ")
     _, err = fmt.Scanf("%d", &row)
-    if err != nil {
-        log.Printf("\nFail read row: %v\n", err)
-        return
+    for ; err != nil || 0 > row || row > 2 ; {
+        fmt.Printf("\nFail read row: %v\n", err)
+        _, err = fmt.Scanf("%d", &row)
     }
 
     fmt.Print("Enter col: ")
     _, err = fmt.Scanf("%d", &col)
-    if err != nil {
-        log.Printf("\nFail read col: %v\n", err)
-        return
+    for ; err != nil || 0 > col || col > 2 ; {
+        fmt.Printf("\nFail read col: %v\n", err)
+        _, err = fmt.Scanf("%d", &col)
     }
 
     return
