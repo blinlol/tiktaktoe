@@ -30,6 +30,13 @@ type GameClient interface {
 	StartGame(ctx context.Context, in *StartRequest, opts ...grpc.CallOption) (*StartResponse, error)
 	MakeMove(ctx context.Context, opts ...grpc.CallOption) (Game_MakeMoveClient, error)
 	Test(ctx context.Context, in *MessageTime, opts ...grpc.CallOption) (*MessageTime, error)
+	// двунаправленный поток общения клиента и сервера, отвечает за
+	// 1. создание и подключение к игре
+	// 2. определение кто за кого играет
+	// 3. отправка сервером информации кто ходит следующим
+	// 4. отправка клиентом хода и получение его на сервере
+	// валидация хода происходит на сервере и клиенте, отвечает за это отдельный пакет
+	GameStream(ctx context.Context, opts ...grpc.CallOption) (Game_GameStreamClient, error)
 }
 
 type gameClient struct {
@@ -89,6 +96,37 @@ func (c *gameClient) Test(ctx context.Context, in *MessageTime, opts ...grpc.Cal
 	return out, nil
 }
 
+func (c *gameClient) GameStream(ctx context.Context, opts ...grpc.CallOption) (Game_GameStreamClient, error) {
+	stream, err := c.cc.NewStream(ctx, &Game_ServiceDesc.Streams[1], "/Game/GameStream", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &gameGameStreamClient{stream}
+	return x, nil
+}
+
+type Game_GameStreamClient interface {
+	Send(*GameClientMessage) error
+	Recv() (*GameServerMessage, error)
+	grpc.ClientStream
+}
+
+type gameGameStreamClient struct {
+	grpc.ClientStream
+}
+
+func (x *gameGameStreamClient) Send(m *GameClientMessage) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *gameGameStreamClient) Recv() (*GameServerMessage, error) {
+	m := new(GameServerMessage)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // GameServer is the server API for Game service.
 // All implementations must embed UnimplementedGameServer
 // for forward compatibility
@@ -101,6 +139,13 @@ type GameServer interface {
 	StartGame(context.Context, *StartRequest) (*StartResponse, error)
 	MakeMove(Game_MakeMoveServer) error
 	Test(context.Context, *MessageTime) (*MessageTime, error)
+	// двунаправленный поток общения клиента и сервера, отвечает за
+	// 1. создание и подключение к игре
+	// 2. определение кто за кого играет
+	// 3. отправка сервером информации кто ходит следующим
+	// 4. отправка клиентом хода и получение его на сервере
+	// валидация хода происходит на сервере и клиенте, отвечает за это отдельный пакет
+	GameStream(Game_GameStreamServer) error
 	mustEmbedUnimplementedGameServer()
 }
 
@@ -116,6 +161,9 @@ func (UnimplementedGameServer) MakeMove(Game_MakeMoveServer) error {
 }
 func (UnimplementedGameServer) Test(context.Context, *MessageTime) (*MessageTime, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Test not implemented")
+}
+func (UnimplementedGameServer) GameStream(Game_GameStreamServer) error {
+	return status.Errorf(codes.Unimplemented, "method GameStream not implemented")
 }
 func (UnimplementedGameServer) mustEmbedUnimplementedGameServer() {}
 
@@ -192,6 +240,32 @@ func _Game_Test_Handler(srv interface{}, ctx context.Context, dec func(interface
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Game_GameStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(GameServer).GameStream(&gameGameStreamServer{stream})
+}
+
+type Game_GameStreamServer interface {
+	Send(*GameServerMessage) error
+	Recv() (*GameClientMessage, error)
+	grpc.ServerStream
+}
+
+type gameGameStreamServer struct {
+	grpc.ServerStream
+}
+
+func (x *gameGameStreamServer) Send(m *GameServerMessage) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *gameGameStreamServer) Recv() (*GameClientMessage, error) {
+	m := new(GameClientMessage)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // Game_ServiceDesc is the grpc.ServiceDesc for Game service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -212,6 +286,12 @@ var Game_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "MakeMove",
 			Handler:       _Game_MakeMove_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "GameStream",
+			Handler:       _Game_GameStream_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

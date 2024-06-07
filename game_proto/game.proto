@@ -31,6 +31,10 @@ message MessageTime {
     string time = 2;
 }
 
+message GameClientMessage {}
+
+message GameServerMessage {}
+
 service Game {
     // клиенты подключаются к серверу, сервер создает игру.
     // клиенты посылают свои желаемые ходы, а сервер подтверждает,
@@ -40,4 +44,12 @@ service Game {
     rpc StartGame (StartRequest) returns (StartResponse) {}
     rpc MakeMove (stream Move) returns (stream Move) {}
     rpc Test (MessageTime) returns (MessageTime) {}
+
+    // двунаправленный поток общения клиента и сервера, отвечает за 
+    // 1. создание и подключение к игре
+    // 2. определение кто за кого играет
+    // 3. отправка сервером информации кто ходит следующим
+    // 4. отправка клиентом хода и получение его на сервере
+    // валидация хода происходит на сервере и клиенте, отвечает за это отдельный пакет
+    rpc GameStream(stream GameClientMessage) returns (stream GameServerMessage) {}
 }
