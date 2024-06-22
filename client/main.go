@@ -17,9 +17,10 @@ import (
 type FieldType [3][3]pb.Player
 
 type Game struct {
-	Id int
+	Id int32
 	Field FieldType
     Iam pb.Player
+    Stream pb.Game_GameStreamClient
 }
 
 var game Game
@@ -85,13 +86,13 @@ func (field *FieldType) ApplyMove(move *pb.Move) {
     field.Print()
 }
 
-func Play(ctx context.Context, client pb.GameClient) error {
+func PlayOld(ctx context.Context, client pb.GameClient) error {
     response, err := client.StartGame(ctx, &pb.StartRequest{})
     if err != nil {
         return err
     }
     log.Printf("Play::response = %s\n", response.String())
-    game.Id = int(response.GetGameId())
+    game.Id = response.GetGameId()
     game.Iam = response.GetIam()
 
     stream, err := client.MakeMove(ctx)
@@ -137,6 +138,87 @@ func Play(ctx context.Context, client pb.GameClient) error {
     return nil
 }
 
+
+
+func NewField() FieldType {
+    return FieldType{{pb.Player_NONE, pb.Player_NONE, pb.Player_NONE},
+                    {pb.Player_NONE, pb.Player_NONE, pb.Player_NONE},
+                    {pb.Player_NONE, pb.Player_NONE, pb.Player_NONE}}
+}
+
+
+func (g *Game) MakeMove(message *pb.GameServerMessage){
+    row, col := GetRowCol()
+    response := pb.GameClientMessage{Row: row, Col: col}
+    log.Println(response)
+    err := g.Stream.Send(&response)
+    if  err != nil {
+        log.Fatalf("%v", err)
+    }
+}
+
+
+func (g *Game) SaveMove(m *pb.GameServerMessage){
+    fmt.Println(m.Message)
+
+    row, col := m.Row, m.Col
+
+    if row < 0 || col < 0 {
+        log.Fatal("row, col = ", row, col)
+    }
+    if g.Field[row][col] != pb.Player_NONE {
+        log.Fatal("Field[row][col] != None")
+    }
+    g.Field[row][col] = m.Who
+    g.Field.Print()
+}
+
+
+func (g *Game) FinishGame(m *pb.GameServerMessage){
+    fmt.Println(m.Message)
+}
+
+
+
+func Play(ctx context.Context, client pb.GameClient) error {
+    stream, err := client.GameStream(ctx)
+    if err != nil {
+        log.Fatalf("%v\n", err)
+    }
+    log.Println("play ", stream)
+
+    message, err := stream.Recv()
+	log.Println(message)
+    if err != nil || message.Type != pb.ServerMessageType_INIT_PLAYER{
+        log.Fatalf("%v\n", err)
+    }
+
+    game.Id = message.GameId
+    game.Iam = message.Who
+    game.Field = NewField()
+    game.Stream = stream
+
+    for {
+        message, err = stream.Recv()
+        log.Println(message)
+        if err != nil {
+            log.Fatalf("%v\n", err)
+        }
+        if message.Who == game.Iam && message.Type == pb.ServerMessageType_MAKE_MOVE {
+            game.MakeMove(message)
+        } else if message.Type == pb.ServerMessageType_SAVE_MOVE {
+            game.SaveMove(message)
+        } else if message.Type == pb.ServerMessageType_END_GAME {
+            game.FinishGame(message)
+            break
+        } else {
+            log.Fatalf("wrong message type")
+        }
+    }
+    return nil
+}
+
+
 func main(){
     conn, err := grpc.NewClient("localhost:50052", grpc.WithTransportCredentials(insecure.NewCredentials()))
     if err != nil {
@@ -147,6 +229,7 @@ func main(){
 
     ctx := context.Background()
 
+    // err = Play(ctx, client)
     err = Play(ctx, client)
     if err != nil {
         log.Fatalf("main: %v\n", err)

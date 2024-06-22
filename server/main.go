@@ -1,187 +1,137 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"io"
 	"log"
 	"net"
-	"sync"
-	"time"
 
+	"tiktaktoe/game"
 	pb "tiktaktoe/game_proto"
 
+	mapset "github.com/deckarep/golang-set/v2"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
-
-
-type FieldType [3][3]pb.Player
-
-type Game struct {
-	Id int
-	Field FieldType
-	cross_stream pb.Game_MakeMoveServer
-	zero_stream pb.Game_MakeMoveServer
-	waitZero chan int
-	waitCross chan int
-}
-
-func (field *FieldType) check() (bool, pb.Player) {
-	for i := 0 ; i < 3; i++ {
-		if field[i][0] != pb.Player_NONE && field[i][0] == field[i][1] && field[i][1] == field[i][2]{
-			return true, field[i][0]
-		}
-		if field[0][i] != pb.Player_NONE && field[0][i] == field[1][i] && field[1][i] == field[2][i] {
-			return true, field[0][i]
-		}
-	}
-	if field[0][0] != pb.Player_NONE && field[0][0] == field[1][1] && field[1][1] == field[2][2] {
-		return true, field[0][0]
-	}
-	if field[0][2] != pb.Player_NONE && field[0][2] == field[1][1] && field[1][1] == field[2][0] {
-		return true, field[0][2]
-	}
-
-	for _, row := range field {
-		for _, el := range row {
-			if el == pb.Player_NONE {
-				return false, pb.Player_NONE
-			}
-		}
-	}
-	return true, pb.Player_NONE
-}
 
 
 type server struct {
 	pb.UnimplementedGameServer
 
-	game Game
+	games []game.Game
+
+	//ids of games that wait second player
+	waiting_ids mapset.Set[int32]
 }
 
 
-func (game *Game) InitPlayers(stream pb.Game_MakeMoveServer){
-	wg := sync.WaitGroup{}
-	wg.Add(2)
-	go func(){
-		defer wg.Done()
-		<-game.waitCross
-	}()
-	go func(){
-		defer wg.Done()
-		<-game.waitZero
-	}()
+func (s *server) findOrCreateGame() (new_game bool, game_id int32) {
+	if s.waiting_ids.IsEmpty() {
+		// new
+		g := game.Game{
+			Id: int32(len(s.games)),
+			Field: game.GameField{},
+			WaitChan: make(chan int),
+			NextMovePlayer: pb.Player_CROSS,
+			Streams: make(map[pb.Player]pb.Game_GameStreamServer)}
+		s.games = append(s.games, g)
+		new_game = true
+		game_id = g.Id
+		s.waiting_ids.Add(game_id)
+	} else {
+		new_game = false
+		game_id, _ = s.waiting_ids.Pop()
+	}
+	return
+}
 
-	move, err := stream.Recv()
+
+
+func SendNextMove(game *game.Game, stream pb.Game_GameStreamServer) error {
+	m := pb.GameServerMessage{
+		Message: "",
+		GameId: game.Id,
+		Type: pb.ServerMessageType_MAKE_MOVE,
+		Who: game.NextMovePlayer,
+	}
+	log.Println(&m)
+	return stream.Send(&m)
+}
+
+
+func (s *server) GameStream(stream pb.Game_GameStreamServer) error {
+	new_game, game_id := s.findOrCreateGame()
+	log.Println(new_game, game_id)
+
+	/*
+	получили id игры в которую будет играть клиент
+	если создана новая, то ждем подключения второго игрока
+	если оба игрока найдены, то отправляем игрокам информацию об игре и том, кто они
+	*/
+
+	// ATOMIC !!!!!!!
+	// одну игру обрабатывают 2 серверных процесса на каждый клиент
+	game := &s.games[game_id]
+	var iam pb.Player
+	var err error
+
+	if new_game {
+		iam, err = game.InitFirstPlayer(stream)
+		log.Println("init first")
+	} else {
+		iam, err = game.InitSecondPlayer(stream)
+		log.Println("init second")
+	}
 	if err != nil {
-		log.Fatalf("InitPlayers: %v\n", err)
+		log.Fatalf("%v", err)
 	}
-
-	if move.Who == pb.Player_CROSS {
-		log.Println("init cross stream")
-		game.cross_stream = stream
-		close(game.waitCross)
-	} else {
-		log.Println("init zero stream")
-		game.zero_stream = stream
-		close(game.waitZero)
-	}
-	wg.Wait()
-}
-
-func (game *Game) ApplyMove(move *pb.Move) (bool, error) {
-	fmt.Println(move.Message)
-
-	row, col := move.Row, move.Col
-	win := false
-	if game.Field[row][col] != pb.Player_NONE {
-		// нельзя поставить, значит посылаем запрос автору на переделку
-		move.Row, move.Col = -1, -1
-		move.Message = "Wrong row, col"
-		if move.Who == pb.Player_CROSS {
-			move.Who = pb.Player_ZERO
-			game.cross_stream.Send(move)
-		} else {
-			move.Who = pb.Player_CROSS
-			game.zero_stream.Send(move)
-		}
-		return false, nil
-	} else {
-		game.Field[row][col] = move.Who
-		move.Finish, move.Winner = game.Field.check()
-		win = move.Finish
-	}
-
-	wg := sync.WaitGroup{}
-	wg.Add(2)
-
-	go func(){
-		defer wg.Done()
-		game.cross_stream.Send(move)
-	}()
-
-	go func(){
-		defer wg.Done()
-		game.zero_stream.Send(move)
-	}()
-
-	wg.Wait()
-	return win, nil
-}
-
-func (*server) Test(ctx context.Context, in *pb.MessageTime) (*pb.MessageTime, error) {
-	log.Printf("server.Test: %s\n", in.String())
-	answer := pb.MessageTime{
-		Message: "from server",
-		Time: time.Now().String()}
-	return &answer, nil
-}
-
-func (s *server) StartGame(ctx context.Context, request *pb.StartRequest) (*pb.StartResponse, error) {
-	if s.game.waitCross == nil {
-		s.game.waitZero = make(chan int)
-		s.game.waitCross = make(chan int)
-	}
-	var response pb.StartResponse
-	if s.game.Id == 0 {
-		response.Iam = pb.Player_ZERO
-		response.GameId = 1
-		s.game.Id = 1
-	} else {
-		response.Iam = pb.Player_CROSS
-		response.GameId = 1
-	}
-	log.Printf("StartGame response: %s", response.String())
-	return &response, nil
-}
-
-func (s *server) MakeMove(stream pb.Game_MakeMoveServer) error {
-	s.game.InitPlayers(stream)
 
 	for {
-		move, err := stream.Recv()
-		if err == io.EOF {
-			log.Println("End Game")
-			break
-		} else if status.Code(err) == codes.Canceled {
-			break
-		} else if err != nil {
-			log.Fatalf("Recv error: %v\n", err)
-			continue
+		// сервер говорит всем, кто делает ход
+		// err = game.SendNextMove()
+		
+		// ждет ответа
+		if iam == game.NextMovePlayer {
+			err = SendNextMove(game, stream)
+			if err != nil {
+				log.Fatalf("%v\n", err)
+			}
+			client_message, err := game.Streams[game.NextMovePlayer].Recv()
+			log.Println(&client_message)
+			if err != nil {
+				log.Fatalf("%v\n", err)
+			}
+			// валидирует, что ход валидный
+			row, col := client_message.Row, client_message.Col
+			if ! game.Field.IsMoveValid(row, col) {
+				continue
+			}
+			// сохраняет ход
+			// отправляет ход всем
+			end, winner, err := game.ApplyMove(row, col)
+			if err != nil {
+				log.Fatalf("%v\n", err)
+			}
+			if end {
+				m := pb.GameServerMessage {
+					Message: "End Game",
+					GameId: game.Id,
+					Type: pb.ServerMessageType_END_GAME,
+					Who: winner,
+				}
+				game.Streams[pb.Player_CROSS].Send(&m)
+				game.Streams[pb.Player_ZERO].Send(&m)
+				break
+			}
 		}
+		
 
-		finish, err := s.game.ApplyMove(move)
-		if finish {
-			break
-		}
-		if err != nil {
-			log.Printf("ApplyMove %v\n", err)
-		}
+
+		// клиенты получили свой паспорт
+		// получили сообщение делать ход и если оно для них, то делают его
+		// отправляют сделанный ход на сервер
+		// получают от сервера сделанный ход и сохраняют его
 	}
 	return nil
 }
+
 
 func main(){
 	lis, err := net.Listen("tcp", ":50052")
@@ -189,7 +139,9 @@ func main(){
 		log.Fatalf("Failed to listen: %v\n", err)
 	}
 	s := grpc.NewServer()
-	pb.RegisterGameServer(s, &server{})
+	// pb.RegisterGameServer(s, &old_server{})
+	pb.RegisterGameServer(s, &server{waiting_ids: mapset.NewSet[int32]()})
+
 	log.Printf("server listening at %v\n", lis.Addr())
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("Serve error: %v\n", err)

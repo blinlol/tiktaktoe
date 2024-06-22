@@ -31,9 +31,33 @@ message MessageTime {
     string time = 2;
 }
 
-message GameClientMessage {}
 
-message GameServerMessage {}
+
+
+
+
+
+message GameClientMessage {
+    int32 row = 10;
+    int32 col = 11;
+}
+
+enum ServerMessageType {
+    UNDEFINED = 0; // error
+    INIT_PLAYER = 1; // send to player who is he
+    MAKE_MOVE = 2; // say player to make move
+    SAVE_MOVE = 3; // apply move 
+    END_GAME = 4; // finish game
+}
+
+message GameServerMessage {
+    string message = 1;
+    int32 gameId = 2;
+    ServerMessageType type = 3;
+    Player who = 4;
+    int32 row = 15;
+    int32 col = 16;
+}
 
 service Game {
     // клиенты подключаются к серверу, сервер создает игру.
